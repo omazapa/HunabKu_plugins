@@ -82,7 +82,8 @@ def main():
         install_requires=[
             'hunabku',
             'validators',
-            'pymongo'
+            'pymongo',
+            'base-62'
         ],
     )
 

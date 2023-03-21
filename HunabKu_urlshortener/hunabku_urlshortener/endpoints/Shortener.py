@@ -1,10 +1,13 @@
 from hunabku.HunabkuBase import HunabkuPluginBase, endpoint
 from hunabku.Config import Config, Param
 from flask import redirect
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 import validators
 from bson.objectid import ObjectId
+import datetime
+import base62
 
+last_sec = None
 
 class Shortener(HunabkuPluginBase):
     config = Config()
@@ -30,22 +33,22 @@ class Shortener(HunabkuPluginBase):
         else:
             return False
 
-    @endpoint('/shorturl/<url_id>', methods=['GET', 'POST'])
-    def url_id_end(self, url_id):
+    @endpoint('/s/<url_code>', methods=['GET', 'POST'])
+    def url_id_end(self, url_code):
         """
-        @api {get} /shorturl/<url_id> Url resolver
+        @api {get} /s/<url_code> Url code resolver
         @apiDescription redirects to an url given the url id
         @apiName resolver
         @apiGroup UrlShortener
 
         @apiSuccess  redirect to the website 
         """
-        x = self.collection.find_one({"_id": ObjectId(url_id)})
+        x = self.collection.find_one({"_id": url_code})
         if x:
             return redirect(x["url"])
         else:
             response = self.app.response_class(
-                response=self.json.dumps({"error": "urlid not found"}),
+                response=self.json.dumps({"error": "url_code not found"}),
                 status=404,
                 mimetype='application/json'
             )
@@ -83,9 +86,46 @@ class Shortener(HunabkuPluginBase):
                 mimetype='application/json'
             )
             return response
+        
+        
+        def generate_code():
+            """
+            Generate a short code for a URL based on the current timestamp and a counter stored in MongoDB.
+
+            Returns:
+                A string with the short code for the URL.
+            """
+            global last_sec
+            
+            curr_secs = int(datetime.datetime.now().timestamp())
+
+            if curr_secs == last_sec:
+                counter = self.collection.find_one_and_update({'_id': 'counter'}, {'$inc': {'value': 1}}, return_document=ReturnDocument.AFTER)['value']
+            else:
+                self.collection.update_one({'_id': 'counter'}, {'$set': {'value': 0}}, upsert=True)
+                counter = 0
+                last_sec = curr_secs
+
+            #generate short code using base62 encoding
+            short_code = base62.encode(int(f"{curr_secs}{counter}"))
+
+            return short_code
+
+        def insert_url(url):
+            """
+            Insert a URL and its corresponding short code in the MongoDB collection.
+
+            Args:
+                url: A string with the URL to be shortened.
+            """
+            short_code = generate_code()
+            self.collection.insert_one({'_id': short_code, 'url': url})
+            return short_code
+
         url = args["url"]
-        x = self.collection.insert_one({"url": url})
-        data = {"urlid": str(x.inserted_id)}
+        short_code = insert_url(url)
+        
+        data = {"url_code": str(short_code)}
         response = self.app.response_class(
             response=self.json.dumps(data),
             status=200,
